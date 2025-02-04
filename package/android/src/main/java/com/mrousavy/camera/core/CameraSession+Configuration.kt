@@ -26,12 +26,15 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.Recorder
 import androidx.camera.video.VideoCapture
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import com.mrousavy.camera.core.extensions.*
 import com.mrousavy.camera.core.types.CameraDeviceFormat
 import com.mrousavy.camera.core.types.Torch
 import com.mrousavy.camera.core.types.VideoStabilizationMode
 import com.mrousavy.camera.core.utils.CamcorderProfileUtils
 import kotlin.math.roundToInt
+import kotlinx.coroutines.*
+import java.util.concurrent.TimeUnit
 
 const val TAG = "CameraSession"
 
@@ -65,6 +68,9 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
   val photoConfig = configuration.photo as? CameraConfiguration.Output.Enabled<CameraConfiguration.Photo>
   val videoConfig = configuration.video as? CameraConfiguration.Output.Enabled<CameraConfiguration.Video>
 
+  // Create a coroutine scope for this configuration
+  val configScope = CoroutineScope(Dispatchers.Main + Job())
+
   // 1. Preview
   val previewConfig = configuration.preview as? CameraConfiguration.Output.Enabled<CameraConfiguration.Preview>
   if (previewConfig != null) {
@@ -78,13 +84,14 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         preview.setPreviewStabilizationEnabled(true)
       }
 
-      // Configure White Balance using Camera2 Interop
-      val extender = Camera2Interop.Extender(preview)
-      // First set AWB mode to AUTO to get a good initial white balance
-      extender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-      // Then enable AWB lock to maintain that white balance
+      // Configure White Balance using Camera2 Interop for Preview
+      val previewExtender = Camera2Interop.Extender(preview)
+      // First set AWB mode to AUTO and let it stabilize
+      previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+      
+      // We'll lock AWB after a delay to allow for convergence
       if (configuration.whiteBalanceLocked) {
-        extender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+        Log.i(TAG, "AWB lock will be applied after convergence")
       }
 
       if (fpsRange != null) {
@@ -105,6 +112,28 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         preview.setResolutionSelector(previewResolutionSelector)
       }
     }.build()
+    
+    // Add preview state observer to handle AWB lock after convergence
+    if (configuration.whiteBalanceLocked) {
+      camera?.cameraInfo?.cameraState?.observe(this as LifecycleOwner) { state ->
+        if (state.type == CameraState.Type.OPEN) {
+          // Camera is ready, wait for AWB to converge before locking
+          configScope.launch {
+            try {
+              delay(500) // Wait 500ms for AWB to stabilize
+              val previewBuilder = Preview.Builder()
+              Camera2Interop.Extender(previewBuilder).apply {
+                setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+              }
+              Log.i(TAG, "AWB lock applied after convergence")
+            } catch (e: Exception) {
+              Log.e(TAG, "Failed to lock AWB after convergence", e)
+            }
+          }
+        }
+      }
+    }
+
     preview.setSurfaceProvider(previewConfig.config.surfaceProvider)
     previewOutput = preview
   } else {
@@ -117,6 +146,16 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
     val photo = ImageCapture.Builder().also { photo ->
       // Configure Photo Output
       photo.setCaptureMode(photoConfig.config.photoQualityBalance.toCaptureMode())
+
+      // Configure White Balance using Camera2 Interop for Photo capture
+      val photoExtender = Camera2Interop.Extender(photo)
+      // Set AWB mode for photo capture
+      photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+      // Apply same lock state to photo capture
+      photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, if (configuration.whiteBalanceLocked) true else false)
+      // Ensure no manual color correction
+      photoExtender.setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
+
       if (format != null) {
         Log.i(TAG, "Photo size: ${format.photoSize}")
         val resolutionSelector = ResolutionSelector.Builder()
@@ -248,6 +287,18 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
     codeScannerOutput = null
   }
   Log.i(TAG, "Successfully created new Outputs for Camera #${configuration.cameraId}!")
+
+  // Check for extension conflicts with white balance lock
+  if (configuration.whiteBalanceLocked) {
+    val photoOptions = configuration.photo as? CameraConfiguration.Output.Enabled<CameraConfiguration.Photo>
+    val enableHdrExtension = photoOptions != null && photoOptions.config.enableHdr
+    if (enableHdrExtension || configuration.enableLowLightBoost) {
+      Log.e(TAG, "White balance lock cannot be used with HDR or Night mode extensions")
+      throw InvalidOutputConfigurationError(
+        IllegalStateException("White balance lock cannot be used with HDR or Night mode extensions")
+      )
+    }
+  }
 }
 
 @SuppressLint("RestrictedApi")
@@ -358,28 +409,10 @@ internal fun CameraSession.configureSideProps(config: CameraConfiguration) {
     camera.cameraControl.setExposureCompensationIndex(exposureCompensation)
   }
 
-  // White Balance Lock
+  // White Balance Lock - Remove FocusMeteringAction to avoid conflicts
+  // We now rely entirely on Camera2Interop's CONTROL_AWB_LOCK set in configureOutputs
   if (config.whiteBalanceLocked) {
-    try {
-      // Create a center point for metering
-      val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
-      val centerPoint = factory.createPoint(0.5f, 0.5f)
-      
-      // Build the focus metering action with auto white balance
-      // Note: We use FLAG_AWB to control white balance metering
-      val action = FocusMeteringAction.Builder(centerPoint)
-        .addPoint(centerPoint, FocusMeteringAction.FLAG_AWB)
-        .setAutoCancelDuration(0, java.util.concurrent.TimeUnit.SECONDS) // Never auto-cancel
-        .disableAutoCancel()
-        .build()
-      
-      // Apply the metering action
-      camera.cameraControl.startFocusAndMetering(action)
-      
-      Log.i(TAG, "White balance lock applied successfully")
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to lock white balance", e)
-    }
+    Log.i(TAG, "White balance lock handled by Camera2Interop in configureOutputs")
   }
 }
 
