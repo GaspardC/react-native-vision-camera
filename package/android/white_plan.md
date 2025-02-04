@@ -49,30 +49,151 @@
 
 ## Implementation Status
 
-### Phase 1 & 2: Core Implementation & Integration ✓
-- [x] Basic white balance lock
+### Phase 1: Core Implementation ✓
+- [x] Basic white balance configuration
 - [x] Camera2Interop integration
 - [x] Preview and photo configuration
 
-### Phase 3: Green Tint Fix ✓
+### Phase 2: Green Tint Fix [In Progress]
 - [x] Proper AWB sequence
 - [x] Consistent settings across outputs
 - [x] Extension conflict prevention
-- [x] Color correction mode setting
+- [ ] Test different AWB modes
 
-### Phase 4: Testing
+### Phase 3: Testing
 - [ ] Test on various devices
 - [ ] Verify color accuracy
 - [ ] Check extension conflicts
 - [ ] Monitor performance impact
 
+## Technical Constraints
+1. **Configuration Timing**:
+   - AWB settings must be set during initial configuration
+   - Cannot modify AWB after camera is bound
+   - Must be consistent across preview and photo outputs
+
+2. **Extension Conflicts**:
+   - Cannot use HDR with white balance lock
+   - Cannot use Night mode with white balance lock
+   - Must check for conflicts during configuration
+
+3. **Device Limitations**:
+   - Some devices may not support AWB lock
+   - Different devices may need different AWB modes
+   - Need to handle device-specific quirks
+
 ## Next Steps
-1. Test on different Android devices
-2. Monitor for device-specific issues
-3. Consider adding device-specific fallbacks
-4. Document any remaining limitations
+1. Test current implementation on different devices
+2. If green tint persists:
+   - Try fixed white balance modes (DAYLIGHT, CLOUDY)
+   - Implement device-specific handling
+   - Consider disabling lock on problematic devices
+
+## Success Criteria
+1. No green tint in photos
+2. Consistent colors across captures
+3. Works on major Android devices
+4. No conflicts with other camera features
 
 ## References
-- [Camera2 API Reference](https://developer.android.com/reference/android/hardware/camera2/CaptureRequest)
-- [CameraX Extensions Guide](https://developer.android.com/media/camera/camerax/extensions-api)
-- [White Balance Issues SO](https://stackoverflow.com/questions/68452665/camera2-api-set-white-balance-but-get-green-picture) 
+- [Camera2 AWB Modes](https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#CONTROL_AWB_MODE)
+- [CameraX Extensions](https://developer.android.com/media/camera/camerax/extensions-api)
+- [White Balance Issues SO](https://stackoverflow.com/questions/68452665/camera2-api-set-white-balance-but-get-green-picture)
+
+## Current Issue: Green Tint
+Photos are showing a green tint when white balance lock is enabled. This is a known issue with Camera2 API on some devices.
+
+## Valid Solution Approaches
+
+### Approach 1: Initial Configuration Lock [Current Implementation]
+**Theory**: Set AWB lock during initial camera configuration
+```kotlin
+// In Preview configuration
+val previewExtender = Camera2Interop.Extender(preview)
+previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+if (configuration.whiteBalanceLocked) {
+  previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+}
+
+// In Photo configuration
+val photoExtender = Camera2Interop.Extender(photo)
+photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, if (configuration.whiteBalanceLocked) true else false)
+```
+
+### Approach 2: Fixed White Balance Mode
+**Theory**: Use a fixed white balance mode instead of AUTO + lock
+```kotlin
+// Use a fixed mode like DAYLIGHT or CLOUDY
+previewExtender.setCaptureRequestOption(
+  CaptureRequest.CONTROL_AWB_MODE,
+  CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT
+)
+```
+
+### Approach 3: Device-Specific Handling
+**Theory**: Different devices need different AWB strategies
+```kotlin
+when (Build.MANUFACTURER.lowercase()) {
+  "samsung" -> CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT
+  "huawei" -> CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
+  else -> CaptureRequest.CONTROL_AWB_MODE_AUTO
+}
+```
+
+## Implementation Priority
+
+1. **Try Approach 3 First**
+   - Most balanced solution
+   - Follows Camera2 API best practices
+   - Least likely to cause side effects
+
+2. **Fall Back to Approach 1**
+   - If Approach 3 still shows green tint
+   - Increase delay time if needed
+
+3. **Consider Approach 4**
+   - If issues persist on specific devices
+   - Maintain device-specific configurations
+
+4. **Last Resort: Approach 2**
+   - Most complex to implement
+   - Requires careful calibration
+   - May need device-specific tuning
+
+## Testing Strategy
+
+1. **Basic Testing**
+   - Test white balance lock in different lighting
+   - Verify color accuracy with color chart
+   - Check lock persistence
+
+2. **Device Testing**
+   - Test on multiple device manufacturers
+   - Document device-specific behaviors
+   - Create device-specific workarounds if needed
+
+3. **Performance Testing**
+   - Measure AWB convergence time
+   - Check impact on capture latency
+   - Monitor memory and CPU usage
+
+## Success Criteria
+1. No green tint in photos
+2. Consistent colors across captures
+3. White balance remains locked
+4. Works across different devices
+5. Minimal impact on capture performance
+
+## References
+- [Camera2 AWB Modes](https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#CONTROL_AWB_MODE)
+- [White Balance Issues SO](https://stackoverflow.com/questions/68452665/camera2-api-set-white-balance-but-get-green-picture)
+- [CameraX Extensions](https://developer.android.com/media/camera/camerax/extensions-api)
+
+## Next Steps
+1. Implement Approach 3
+2. Test on development device
+3. If green tint persists:
+   - Try increasing convergence delay
+   - Test on different devices
+   - Consider device-specific approach 

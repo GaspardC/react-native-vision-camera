@@ -6,6 +6,7 @@ import android.hardware.camera2.CaptureRequest
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
@@ -86,12 +87,12 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
 
       // Configure White Balance using Camera2 Interop for Preview
       val previewExtender = Camera2Interop.Extender(preview)
-      // First set AWB mode to AUTO and let it stabilize
-      previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-      
-      // We'll lock AWB after a delay to allow for convergence
+      // Use fixed DAYLIGHT mode instead of AUTO + lock
       if (configuration.whiteBalanceLocked) {
-        Log.i(TAG, "AWB lock will be applied after convergence")
+        Log.i(TAG, "Using fixed DAYLIGHT white balance mode")
+        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT)
+      } else {
+        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
       }
 
       if (fpsRange != null) {
@@ -113,27 +114,6 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
       }
     }.build()
     
-    // Add preview state observer to handle AWB lock after convergence
-    if (configuration.whiteBalanceLocked) {
-      camera?.cameraInfo?.cameraState?.observe(this as LifecycleOwner) { state ->
-        if (state.type == CameraState.Type.OPEN) {
-          // Camera is ready, wait for AWB to converge before locking
-          configScope.launch {
-            try {
-              delay(500) // Wait 500ms for AWB to stabilize
-              val previewBuilder = Preview.Builder()
-              Camera2Interop.Extender(previewBuilder).apply {
-                setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
-              }
-              Log.i(TAG, "AWB lock applied after convergence")
-            } catch (e: Exception) {
-              Log.e(TAG, "Failed to lock AWB after convergence", e)
-            }
-          }
-        }
-      }
-    }
-
     preview.setSurfaceProvider(previewConfig.config.surfaceProvider)
     previewOutput = preview
   } else {
@@ -149,12 +129,13 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
 
       // Configure White Balance using Camera2 Interop for Photo capture
       val photoExtender = Camera2Interop.Extender(photo)
-      // Set AWB mode for photo capture
-      photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-      // Apply same lock state to photo capture
-      photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, if (configuration.whiteBalanceLocked) true else false)
-      // Ensure no manual color correction
-      photoExtender.setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
+      // Use the same fixed white balance mode for photos
+      if (configuration.whiteBalanceLocked) {
+        Log.i(TAG, "Using fixed DAYLIGHT white balance mode for photo capture")
+        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT)
+      } else {
+        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+      }
 
       if (format != null) {
         Log.i(TAG, "Photo size: ${format.photoSize}")
