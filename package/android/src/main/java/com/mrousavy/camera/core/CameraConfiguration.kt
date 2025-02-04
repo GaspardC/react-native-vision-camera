@@ -35,6 +35,7 @@ data class CameraConfiguration(
   var torch: Torch = Torch.OFF,
   var videoStabilizationMode: VideoStabilizationMode = VideoStabilizationMode.OFF,
   var exposure: Double? = null,
+  var whiteBalanceLocked: Boolean = true,
 
   // Zoom
   var zoom: Float = 1f,

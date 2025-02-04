@@ -1,16 +1,24 @@
 package com.mrousavy.camera.core
 
 import android.annotation.SuppressLint
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import android.util.Log
 import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraState
 import androidx.camera.core.DynamicRange
 import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
+import androidx.camera.core.MeteringPoint
 import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.TorchState
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.extensions.ExtensionMode
@@ -24,6 +32,8 @@ import com.mrousavy.camera.core.types.Torch
 import com.mrousavy.camera.core.types.VideoStabilizationMode
 import com.mrousavy.camera.core.utils.CamcorderProfileUtils
 import kotlin.math.roundToInt
+
+const val TAG = "CameraSession"
 
 private fun assertFormatRequirement(
   propName: String,
@@ -46,11 +56,11 @@ private fun assertFormatRequirement(
 @Suppress("LiftReturnOrAssignment")
 internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) {
   val cameraId = configuration.cameraId!!
-  Log.i(CameraSession.TAG, "Creating new Outputs for Camera #$cameraId...")
+  Log.i(TAG, "Creating new Outputs for Camera #$cameraId...")
   val fpsRange = configuration.targetFpsRange
   val format = configuration.format
 
-  Log.i(CameraSession.TAG, "Using FPS Range: $fpsRange")
+  Log.i(TAG, "Using FPS Range: $fpsRange")
 
   val photoConfig = configuration.photo as? CameraConfiguration.Output.Enabled<CameraConfiguration.Photo>
   val videoConfig = configuration.video as? CameraConfiguration.Output.Enabled<CameraConfiguration.Video>
@@ -58,7 +68,7 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
   // 1. Preview
   val previewConfig = configuration.preview as? CameraConfiguration.Output.Enabled<CameraConfiguration.Preview>
   if (previewConfig != null) {
-    Log.i(CameraSession.TAG, "Creating Preview output...")
+    Log.i(TAG, "Creating Preview output...")
     val preview = Preview.Builder().also { preview ->
       // Configure Preview Output
       if (configuration.videoStabilizationMode.isAtLeast(VideoStabilizationMode.CINEMATIC)) {
@@ -67,6 +77,16 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         }
         preview.setPreviewStabilizationEnabled(true)
       }
+
+      // Configure White Balance using Camera2 Interop
+      val extender = Camera2Interop.Extender(preview)
+      // First set AWB mode to AUTO to get a good initial white balance
+      extender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+      // Then enable AWB lock to maintain that white balance
+      if (configuration.whiteBalanceLocked) {
+        extender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+      }
+
       if (fpsRange != null) {
         assertFormatRequirement("fps", format, InvalidFpsError(fpsRange.upper)) {
           fpsRange.lower >= it.minFps && fpsRange.upper <= it.maxFps
@@ -93,12 +113,12 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
 
   // 2. Image Capture
   if (photoConfig != null) {
-    Log.i(CameraSession.TAG, "Creating Photo output...")
+    Log.i(TAG, "Creating Photo output...")
     val photo = ImageCapture.Builder().also { photo ->
       // Configure Photo Output
       photo.setCaptureMode(photoConfig.config.photoQualityBalance.toCaptureMode())
       if (format != null) {
-        Log.i(CameraSession.TAG, "Photo size: ${format.photoSize}")
+        Log.i(TAG, "Photo size: ${format.photoSize}")
         val resolutionSelector = ResolutionSelector.Builder()
           .forSize(format.photoSize)
           .setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE)
@@ -113,16 +133,16 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
 
   // 3. Video Capture
   if (videoConfig != null) {
-    Log.i(CameraSession.TAG, "Creating Video output...")
+    Log.i(TAG, "Creating Video output...")
     val currentRecorder = recorderOutput
     val recorder = if (recording != null && currentRecorder != null) {
       // If we are currently recording, then don't re-create the recorder instance.
       // Instead, re-use it so we don't cancel the active recording.
-      Log.i(CameraSession.TAG, "Re-using active Recorder because we are currently recording...")
+      Log.i(TAG, "Re-using active Recorder because we are currently recording...")
       currentRecorder
     } else {
       // We are currently not recording, so we can re-create a recorder instance if needed.
-      Log.i(CameraSession.TAG, "Creating new Recorder...")
+      Log.i(TAG, "Creating new Recorder...")
       Recorder.Builder().also { recorder ->
         format?.let { format ->
           recorder.setQualitySelector(format.videoQualitySelector)
@@ -170,7 +190,7 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         video.setDynamicRange(DynamicRange.HDR_UNSPECIFIED_10_BIT)
       }
       if (format != null) {
-        Log.i(CameraSession.TAG, "Video size: ${format.videoSize}")
+        Log.i(TAG, "Video size: ${format.videoSize}")
         val resolutionSelector = ResolutionSelector.Builder()
           .forSize(format.videoSize)
           .setAllowedResolutionMode(ResolutionSelector.PREFER_CAPTURE_RATE_OVER_HIGHER_RESOLUTION)
@@ -189,7 +209,7 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
   val frameProcessorConfig = configuration.frameProcessor as? CameraConfiguration.Output.Enabled<CameraConfiguration.FrameProcessor>
   if (frameProcessorConfig != null) {
     val pixelFormat = frameProcessorConfig.config.pixelFormat
-    Log.i(CameraSession.TAG, "Creating $pixelFormat Frame Processor output...")
+    Log.i(TAG, "Creating $pixelFormat Frame Processor output...")
     val analyzer = ImageAnalysis.Builder().also { analysis ->
       analysis.setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER)
       analysis.setOutputImageFormat(pixelFormat.toImageAnalysisFormat())
@@ -201,7 +221,7 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         analysis.setTargetFrameRate(fpsRange)
       }
       if (format != null) {
-        Log.i(CameraSession.TAG, "Frame Processor size: ${format.videoSize}")
+        Log.i(TAG, "Frame Processor size: ${format.videoSize}")
         val resolutionSelector = ResolutionSelector.Builder()
           .forSize(format.videoSize)
           .setAllowedResolutionMode(ResolutionSelector.PREFER_CAPTURE_RATE_OVER_HIGHER_RESOLUTION)
@@ -219,7 +239,7 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
   // 5. Code Scanner
   val codeScannerConfig = configuration.codeScanner as? CameraConfiguration.Output.Enabled<CameraConfiguration.CodeScanner>
   if (codeScannerConfig != null) {
-    Log.i(CameraSession.TAG, "Creating CodeScanner output...")
+    Log.i(TAG, "Creating CodeScanner output...")
     val analyzer = ImageAnalysis.Builder().build()
     val pipeline = CodeScannerPipeline(codeScannerConfig.config, callback)
     analyzer.setAnalyzer(CameraQueues.analyzerExecutor, pipeline)
@@ -227,12 +247,12 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
   } else {
     codeScannerOutput = null
   }
-  Log.i(CameraSession.TAG, "Successfully created new Outputs for Camera #${configuration.cameraId}!")
+  Log.i(TAG, "Successfully created new Outputs for Camera #${configuration.cameraId}!")
 }
 
 @SuppressLint("RestrictedApi")
 internal suspend fun CameraSession.configureCamera(provider: ProcessCameraProvider, configuration: CameraConfiguration) {
-  Log.i(CameraSession.TAG, "Binding Camera #${configuration.cameraId}...")
+  Log.i(TAG, "Binding Camera #${configuration.cameraId}...")
   checkCameraPermission()
 
   // Outputs
@@ -273,12 +293,12 @@ internal suspend fun CameraSession.configureCamera(provider: ProcessCameraProvid
 
   // Unbind all currently bound use-cases before rebinding
   if (currentUseCases.isNotEmpty()) {
-    Log.i(CameraSession.TAG, "Unbinding ${currentUseCases.size} use-cases for Camera #${camera?.cameraInfo?.id}...")
+    Log.i(TAG, "Unbinding ${currentUseCases.size} use-cases for Camera #${camera?.cameraInfo?.id}...")
     provider.unbind(*currentUseCases.toTypedArray())
   }
 
   // Bind it all together (must be on UI Thread)
-  Log.i(CameraSession.TAG, "Binding ${useCases.size} use-cases...")
+  Log.i(TAG, "Binding ${useCases.size} use-cases...")
   camera = provider.bindToLifecycle(this, cameraSelector, *useCases.toTypedArray())
   // Notify callback
   callback.onInitialized()
@@ -289,7 +309,7 @@ internal suspend fun CameraSession.configureCamera(provider: ProcessCameraProvid
   // Listen to Camera events
   var lastIsStreaming = false
   camera!!.cameraInfo.cameraState.observe(this) { state ->
-    Log.i(CameraSession.TAG, "Camera State: ${state.type} (has error: ${state.error != null})")
+    Log.i(TAG, "Camera State: ${state.type} (has error: ${state.error != null})")
 
     val isStreaming = state.type == CameraState.Type.OPEN
     if (isStreaming != lastIsStreaming) {
@@ -308,9 +328,10 @@ internal suspend fun CameraSession.configureCamera(provider: ProcessCameraProvid
       callback.onError(error.toCameraError())
     }
   }
-  Log.i(CameraSession.TAG, "Successfully bound Camera #${configuration.cameraId}!")
+  Log.i(TAG, "Successfully bound Camera #${configuration.cameraId}!")
 }
 
+@OptIn(ExperimentalCamera2Interop::class)
 internal fun CameraSession.configureSideProps(config: CameraConfiguration) {
   val camera = camera ?: throw CameraNotReadyError()
 
@@ -335,6 +356,30 @@ internal fun CameraSession.configureSideProps(config: CameraConfiguration) {
   val exposureCompensation = config.exposure?.roundToInt() ?: 0
   if (currentExposureCompensation != exposureCompensation) {
     camera.cameraControl.setExposureCompensationIndex(exposureCompensation)
+  }
+
+  // White Balance Lock
+  if (config.whiteBalanceLocked) {
+    try {
+      // Create a center point for metering
+      val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
+      val centerPoint = factory.createPoint(0.5f, 0.5f)
+      
+      // Build the focus metering action with auto white balance
+      // Note: We use FLAG_AWB to control white balance metering
+      val action = FocusMeteringAction.Builder(centerPoint)
+        .addPoint(centerPoint, FocusMeteringAction.FLAG_AWB)
+        .setAutoCancelDuration(0, java.util.concurrent.TimeUnit.SECONDS) // Never auto-cancel
+        .disableAutoCancel()
+        .build()
+      
+      // Apply the metering action
+      camera.cameraControl.startFocusAndMetering(action)
+      
+      Log.i(TAG, "White balance lock applied successfully")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to lock white balance", e)
+    }
   }
 }
 
