@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.ScaleGestureDetector
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.camera.view.PreviewView
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.mrousavy.camera.core.CameraConfiguration
@@ -319,7 +320,12 @@ class CameraView(context: Context) :
     invokeOnError(error)
   }
 
+  private fun showUpdateAlert() {
+    Toast.makeText(context, "Camera module initialized successfully!", Toast.LENGTH_SHORT).show()
+  }
+
   override fun onInitialized() {
+    showUpdateAlert()
     invokeOnInitialized()
   }
 
