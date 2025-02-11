@@ -321,7 +321,7 @@ class CameraView(context: Context) :
   }
 
   private fun showUpdateAlert() {
-    Toast.makeText(context, "Camera module initialized successfully!", Toast.LENGTH_SHORT).show()
+    Toast.makeText(context, "Camera module initialized", Toast.LENGTH_SHORT).show()
   }
 
   override fun onInitialized() {

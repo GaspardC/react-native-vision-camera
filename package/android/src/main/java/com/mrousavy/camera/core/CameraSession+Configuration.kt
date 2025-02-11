@@ -87,10 +87,10 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
 
       // Configure White Balance using Camera2 Interop for Preview
       val previewExtender = Camera2Interop.Extender(preview)
-      // Use fixed DAYLIGHT mode instead of AUTO + lock
+      // Use fixed FLUORESCENT mode for LED-optimized temperature
       if (configuration.whiteBalanceLocked) {
-        Log.i(TAG, "Using fixed DAYLIGHT white balance mode")
-        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT)
+        Log.i(TAG, "Using fixed FLUORESCENT white balance mode")
+        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT)
       } else {
         previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
       }
@@ -131,8 +131,8 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
       val photoExtender = Camera2Interop.Extender(photo)
       // Use the same fixed white balance mode for photos
       if (configuration.whiteBalanceLocked) {
-        Log.i(TAG, "Using fixed DAYLIGHT white balance mode for photo capture")
-        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT)
+        Log.i(TAG, "Using fixed FLUORESCENT white balance mode for photo capture")
+        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT)
       } else {
         photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
       }
