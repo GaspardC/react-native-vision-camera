@@ -325,7 +325,6 @@ class CameraView(context: Context) :
   }
 
   override fun onInitialized() {
-    showUpdateAlert()
     invokeOnInitialized()
   }
 
