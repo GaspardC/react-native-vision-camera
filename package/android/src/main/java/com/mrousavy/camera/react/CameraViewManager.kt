@@ -41,6 +41,7 @@ class CameraViewManager : ViewGroupManager<CameraView>() {
       .put(CameraOutputOrientationChangedEvent.EVENT_NAME, MapBuilder.of("registrationName", "onOutputOrientationChanged"))
       .put(CameraPreviewOrientationChangedEvent.EVENT_NAME, MapBuilder.of("registrationName", "onPreviewOrientationChanged"))
       .put(AverageFpsChangedEvent.EVENT_NAME, MapBuilder.of("registrationName", "onAverageFpsChanged"))
+      .put(CameraExposureLockedEvent.EVENT_NAME, MapBuilder.of("registrationName", "onExposureLocked"))
       .build()
 
   override fun getName(): String = TAG
@@ -237,6 +238,11 @@ class CameraViewManager : ViewGroupManager<CameraView>() {
   @ReactProp(name = "exposure")
   fun setExposure(view: CameraView, exposure: Double) {
     view.exposure = exposure
+  }
+
+  @ReactProp(name = "autoLockOnPreviewStart")
+  fun setAutoLockOnPreviewStart(view: CameraView, autoLockOnPreviewStart: Boolean) {
+    view.autoLockOnPreviewStart = autoLockOnPreviewStart
   }
 
   @ReactProp(name = "outputOrientation")
