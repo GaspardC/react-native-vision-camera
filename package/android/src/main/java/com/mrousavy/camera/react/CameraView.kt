@@ -160,13 +160,17 @@ class CameraView(context: Context) :
   private fun triggerExposureLock() {
     if (hasLockedExposure) return
     hasLockedExposure = true
-    Log.i(TAG, "Triggering exposure lock...")
+    Log.i(TAG, "╔═══════════════════════════════════════════════════════")
+    Log.i(TAG, "║ 🔒 TRIGGERING EXPOSURE LOCK")
+    Log.i(TAG, "║ Preview stabilized after 500ms, locking AE/AWB...")
+    Log.i(TAG, "╚═══════════════════════════════════════════════════════")
 
     mainCoroutineScope.launch {
       cameraSession.configure { config ->
         config.exposureLocked = true
       }
       // Notify JS that exposure is now locked
+      Log.i(TAG, "✅ Exposure lock applied - emitting onExposureLocked callback")
       invokeOnExposureLocked()
     }
   }
@@ -178,12 +182,16 @@ class CameraView(context: Context) :
   private fun resetExposureLock() {
     if (!hasLockedExposure) return
     hasLockedExposure = false
-    Log.i(TAG, "Resetting exposure lock...")
+    Log.i(TAG, "╔═══════════════════════════════════════════════════════")
+    Log.i(TAG, "║ 🔓 RESETTING EXPOSURE LOCK")
+    Log.i(TAG, "║ Preview stopped, unlocking AE/AWB for next session...")
+    Log.i(TAG, "╚═══════════════════════════════════════════════════════")
 
     mainCoroutineScope.launch {
       cameraSession.configure { config ->
         config.exposureLocked = false
       }
+      Log.i(TAG, "✅ Exposure lock released - AE/AWB will re-adapt on next start")
     }
   }
 

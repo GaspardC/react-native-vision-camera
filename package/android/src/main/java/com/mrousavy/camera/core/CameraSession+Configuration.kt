@@ -80,18 +80,29 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
       // Configure White Balance using Camera2 Interop for Preview
       val previewExtender = Camera2Interop.Extender(preview)
       // Use fixed FLUORESCENT mode for LED-optimized temperature
-      if (configuration.whiteBalanceLocked) {
-        Log.i(TAG, "Using fixed FLUORESCENT white balance mode")
-        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT)
+      val awbMode = if (configuration.whiteBalanceLocked) {
+        CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT
       } else {
-        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+        CaptureRequest.CONTROL_AWB_MODE_AUTO
       }
+      previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
 
       // Configure Exposure Lock using Camera2 Interop for Preview
-      if (configuration.exposureLocked) {
-        Log.i(TAG, "Locking auto-exposure for preview")
+      val aeLock = configuration.exposureLocked
+      if (aeLock) {
         previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
       }
+
+      // Log camera parameters summary for debugging
+      Log.i(TAG, "┌─────────────────────────────────────────────────────")
+      Log.i(TAG, "│ 📷 CAMERA PARAMETERS (Preview)")
+      Log.i(TAG, "├─────────────────────────────────────────────────────")
+      Log.i(TAG, "│ CONTROL_AWB_MODE: ${awbModeToString(awbMode)}")
+      Log.i(TAG, "│ CONTROL_AE_LOCK: $aeLock")
+      Log.i(TAG, "│ whiteBalanceLocked: ${configuration.whiteBalanceLocked}")
+      Log.i(TAG, "│ exposureLocked: ${configuration.exposureLocked}")
+      Log.i(TAG, "│ autoLockOnPreviewStart: ${configuration.autoLockOnPreviewStart}")
+      Log.i(TAG, "└─────────────────────────────────────────────────────")
 
       if (fpsRange != null) {
         assertFormatRequirement("fps", format, InvalidFpsError(fpsRange.upper)) {
@@ -128,18 +139,26 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
       // Configure White Balance using Camera2 Interop for Photo capture
       val photoExtender = Camera2Interop.Extender(photo)
       // Use the same fixed white balance mode for photos
-      if (configuration.whiteBalanceLocked) {
-        Log.i(TAG, "Using fixed FLUORESCENT white balance mode for photo capture")
-        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT)
+      val photoAwbMode = if (configuration.whiteBalanceLocked) {
+        CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT
       } else {
-        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+        CaptureRequest.CONTROL_AWB_MODE_AUTO
       }
+      photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, photoAwbMode)
 
       // Configure Exposure Lock using Camera2 Interop for Photo capture
-      if (configuration.exposureLocked) {
-        Log.i(TAG, "Locking auto-exposure for photo capture")
+      val photoAeLock = configuration.exposureLocked
+      if (photoAeLock) {
         photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
       }
+
+      // Log camera parameters for photo capture
+      Log.i(TAG, "┌─────────────────────────────────────────────────────")
+      Log.i(TAG, "│ 📸 CAMERA PARAMETERS (Photo Capture)")
+      Log.i(TAG, "├─────────────────────────────────────────────────────")
+      Log.i(TAG, "│ CONTROL_AWB_MODE: ${awbModeToString(photoAwbMode)}")
+      Log.i(TAG, "│ CONTROL_AE_LOCK: $photoAeLock")
+      Log.i(TAG, "└─────────────────────────────────────────────────────")
 
       if (format != null) {
         Log.i(TAG, "Photo size: ${format.photoSize}")
@@ -410,3 +429,20 @@ internal fun CameraSession.configureIsActive(config: CameraConfiguration) {
     lifecycleRegistry.currentState = Lifecycle.State.CREATED
   }
 }
+
+/**
+ * Helper to convert AWB mode integer to human-readable string for logging
+ */
+private fun awbModeToString(mode: Int): String =
+  when (mode) {
+    CaptureRequest.CONTROL_AWB_MODE_OFF -> "OFF"
+    CaptureRequest.CONTROL_AWB_MODE_AUTO -> "AUTO"
+    CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT -> "INCANDESCENT (~2700K)"
+    CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT -> "FLUORESCENT (~4000K)"
+    CaptureRequest.CONTROL_AWB_MODE_WARM_FLUORESCENT -> "WARM_FLUORESCENT (~3000K)"
+    CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT -> "DAYLIGHT (~5500K)"
+    CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT -> "CLOUDY_DAYLIGHT (~6500K)"
+    CaptureRequest.CONTROL_AWB_MODE_TWILIGHT -> "TWILIGHT (~15000K)"
+    CaptureRequest.CONTROL_AWB_MODE_SHADE -> "SHADE (~7500K)"
+    else -> "UNKNOWN($mode)"
+  }
