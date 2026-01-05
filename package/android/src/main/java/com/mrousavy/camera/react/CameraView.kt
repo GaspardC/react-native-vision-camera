@@ -171,6 +171,22 @@ class CameraView(context: Context) :
     }
   }
 
+  /**
+   * Resets exposure lock when preview stops.
+   * This allows AE/AWB to re-adapt when camera restarts for a new exam.
+   */
+  private fun resetExposureLock() {
+    if (!hasLockedExposure) return
+    hasLockedExposure = false
+    Log.i(TAG, "Resetting exposure lock...")
+
+    mainCoroutineScope.launch {
+      cameraSession.configure { config ->
+        config.exposureLocked = false
+      }
+    }
+  }
+
   fun update() {
     Log.i(TAG, "Updating CameraSession...")
     val now = System.currentTimeMillis()
@@ -334,8 +350,10 @@ class CameraView(context: Context) :
             }
           } else {
             invokeOnPreviewStopped()
-            // Reset lock flag when preview stops
-            hasLockedExposure = false
+            // Reset exposure lock when preview stops (allows AE/AWB to re-adapt on restart)
+            if (autoLockOnPreviewStart) {
+              resetExposureLock()
+            }
           }
           lastIsPreviewing = isPreviewing
         }
