@@ -149,6 +149,24 @@ export interface CameraProps extends ViewProps {
    * The value between min- and max supported exposure is considered the default, neutral value.
    */
   exposure?: number
+  /**
+   * If `true`, automatically locks exposure and white balance after preview stabilization.
+   * This is useful for capturing sequences of photos with consistent exposure and color settings.
+   *
+   * When enabled:
+   * - Camera starts with auto-exposure (AE) and auto white balance (AWB)
+   * - After ~500ms of preview stabilization, exposure and AWB are locked
+   * - The {@linkcode onExposureLocked} callback is triggered when lock is complete
+   * - All subsequent captures will have identical exposure/AWB settings
+   *
+   * Use {@linkcode onExposureLocked} to know when it's safe to start capturing a photo sequence.
+   *
+   * @note Incompatible with HDR and Night Mode on Android
+   * @note To reset the lock, set `isActive={false}` then `isActive={true}`
+   * @platform Android
+   * @default false
+   */
+  autoLockOnPreviewStart?: boolean
   //#endregion
 
   //#region Format/Preset selection
@@ -383,6 +401,28 @@ export interface CameraProps extends ViewProps {
    * @param uiRotation The degrees that UI elements need to be rotated by to appear up-right.
    */
   onUIRotationChanged?: (uiRotation: number) => void
+  /**
+   * Called when exposure and white balance are locked after preview stabilization.
+   *
+   * This callback is triggered when {@linkcode autoLockOnPreviewStart} is `true` and the
+   * camera has successfully locked its exposure and white balance settings.
+   *
+   * Use this to know when it's safe to start capturing a photo sequence with consistent settings.
+   *
+   * @example
+   * ```tsx
+   * <Camera
+   *   autoLockOnPreviewStart={true}
+   *   onExposureLocked={() => {
+   *     console.log('Ready for capture sequence')
+   *     startPhotoSequence()
+   *   }}
+   * />
+   * ```
+   *
+   * @platform Android
+   */
+  onExposureLocked?: () => void
   /**
    * A worklet which will be called for every frame the Camera "sees".
    *

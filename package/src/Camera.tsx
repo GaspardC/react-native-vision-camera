@@ -100,6 +100,7 @@ export class Camera extends React.PureComponent<CameraProps, CameraState> {
     this.onShutter = this.onShutter.bind(this)
     this.onOutputOrientationChanged = this.onOutputOrientationChanged.bind(this)
     this.onPreviewOrientationChanged = this.onPreviewOrientationChanged.bind(this)
+    this.onExposureLocked = this.onExposureLocked.bind(this)
     this.onError = this.onError.bind(this)
     this.onCodeScanned = this.onCodeScanned.bind(this)
     this.ref = React.createRef<RefType>()
@@ -557,6 +558,10 @@ export class Camera extends React.PureComponent<CameraProps, CameraState> {
       this.lastUIRotation = uiRotation
     }
   }
+
+  private onExposureLocked(): void {
+    this.props.onExposureLocked?.()
+  }
   //#endregion
 
   private onCodeScanned(event: NativeSyntheticEvent<OnCodeScannedEvent>): void {
@@ -668,6 +673,7 @@ export class Camera extends React.PureComponent<CameraProps, CameraState> {
         videoBitRateOverride={bitRateOverride}
         onOutputOrientationChanged={this.onOutputOrientationChanged}
         onPreviewOrientationChanged={this.onPreviewOrientationChanged}
+        onExposureLocked={this.props.autoLockOnPreviewStart ? this.onExposureLocked : undefined}
         onError={this.onError}
         codeScannerOptions={codeScanner}
         enableFrameProcessor={frameProcessor != null}
