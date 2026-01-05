@@ -54,6 +54,14 @@ fun CameraView.invokeOnPreviewStopped() {
   this.sendEvent(event)
 }
 
+fun CameraView.invokeOnExposureLocked() {
+  Log.i(CameraView.TAG, "invokeOnExposureLocked()")
+
+  val surfaceId = UIManagerHelper.getSurfaceId(this)
+  val event = CameraExposureLockedEvent(surfaceId, id)
+  this.sendEvent(event)
+}
+
 fun CameraView.invokeOnShutter(type: ShutterType) {
   Log.i(CameraView.TAG, "invokeOnShutter($type)")
 

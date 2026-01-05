@@ -89,6 +89,7 @@ class CameraView(context: Context) :
   var zoom: Float = 1f // in "factor"
   var exposure: Double = 0.0
   var outputOrientation: OutputOrientation = OutputOrientation.DEVICE
+  var autoLockOnPreviewStart = false
   var androidPreviewViewType: PreviewViewType = PreviewViewType.SURFACE_VIEW
     set(value) {
       field = value
@@ -110,7 +111,9 @@ class CameraView(context: Context) :
 
   // private properties
   private var isMounted = false
+  private var hasLockedExposure = false
   private val mainCoroutineScope = CoroutineScope(Dispatchers.Main)
+  private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
   // session
   internal val cameraSession: CameraSession
@@ -147,6 +150,25 @@ class CameraView(context: Context) :
 
   fun destroy() {
     cameraSession.close()
+  }
+
+  /**
+   * Triggers exposure lock after preview stabilization.
+   * This reconfigures the camera session with exposureLocked = true
+   * and emits the onExposureLocked callback to JS.
+   */
+  private fun triggerExposureLock() {
+    if (hasLockedExposure) return
+    hasLockedExposure = true
+    Log.i(TAG, "Triggering exposure lock...")
+
+    mainCoroutineScope.launch {
+      cameraSession.configure { config ->
+        config.exposureLocked = true
+      }
+      // Notify JS that exposure is now locked
+      invokeOnExposureLocked()
+    }
   }
 
   fun update() {
@@ -230,6 +252,7 @@ class CameraView(context: Context) :
         config.enableLowLightBoost = lowLightBoost
         config.torch = torch
         config.exposure = exposure
+        config.autoLockOnPreviewStart = autoLockOnPreviewStart
 
         // Zoom
         config.zoom = zoom
@@ -300,8 +323,19 @@ class CameraView(context: Context) :
           // Notify callback
           if (isPreviewing) {
             invokeOnPreviewStarted()
+            // Auto-lock exposure after preview stabilization
+            if (autoLockOnPreviewStart && !hasLockedExposure) {
+              Log.i(TAG, "Auto-lock enabled, scheduling exposure lock after 500ms...")
+              handler.postDelayed({
+                if (!hasLockedExposure && isActive) {
+                  triggerExposureLock()
+                }
+              }, 500) // Wait for AE/AWB to stabilize
+            }
           } else {
             invokeOnPreviewStopped()
+            // Reset lock flag when preview stops
+            hasLockedExposure = false
           }
           lastIsPreviewing = isPreviewing
         }

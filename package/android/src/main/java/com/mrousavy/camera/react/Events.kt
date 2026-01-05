@@ -102,3 +102,11 @@ class CameraCodeScannedEvent(surfaceId: Int, viewId: Int, private val data: Writ
     const val EVENT_NAME = "topCameraCodeScanned"
   }
 }
+
+class CameraExposureLockedEvent(surfaceId: Int, viewId: Int) : Event<CameraExposureLockedEvent>(surfaceId, viewId) {
+  override fun getEventName() = EVENT_NAME
+  override fun getEventData(): WritableMap = Arguments.createMap()
+  companion object {
+    const val EVENT_NAME = "topCameraExposureLocked"
+  }
+}
