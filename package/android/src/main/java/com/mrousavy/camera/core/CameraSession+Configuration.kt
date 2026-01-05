@@ -1,25 +1,19 @@
 package com.mrousavy.camera.core
 
 import android.annotation.SuppressLint
-import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2Interop
-import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
-import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraState
 import androidx.camera.core.DynamicRange
 import androidx.camera.core.ExperimentalGetImage
-import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
-import androidx.camera.core.MeteringPoint
 import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
-import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.TorchState
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.extensions.ExtensionMode
@@ -27,7 +21,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.Recorder
 import androidx.camera.video.VideoCapture
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
 import com.mrousavy.camera.core.extensions.*
 import com.mrousavy.camera.core.types.CameraDeviceFormat
 import com.mrousavy.camera.core.types.Torch
@@ -35,7 +28,6 @@ import com.mrousavy.camera.core.types.VideoStabilizationMode
 import com.mrousavy.camera.core.utils.CamcorderProfileUtils
 import kotlin.math.roundToInt
 import kotlinx.coroutines.*
-import java.util.concurrent.TimeUnit
 
 const val TAG = "CameraSession"
 
@@ -119,7 +111,7 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         preview.setResolutionSelector(previewResolutionSelector)
       }
     }.build()
-    
+
     preview.setSurfaceProvider(previewConfig.config.surfaceProvider)
     previewOutput = preview
   } else {

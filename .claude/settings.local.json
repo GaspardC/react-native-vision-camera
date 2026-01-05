@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "Bash(test:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(git -C /Users/gaspardc/Development/react-native-vision-camera log --oneline -10)",
+      "Bash(git -C /Users/gaspardc/Development/react-native-vision-camera diff main --stat)",
+      "Bash(git -C /Users/gaspardc/Development/react-native-vision-camera diff HEAD~1 package/android/src/main/java/com/mrousavy/camera/core/CameraSession+Configuration.kt)",
+      "Bash(git -C /Users/gaspardc/Development/react-native-vision-camera diff HEAD package/android/src/main/java/com/mrousavy/camera/core/CameraSession+Configuration.kt)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\ndocs: add auto-lock exposure specification for stable photo sequences\n\nAdd specification document for the autoLockOnPreviewStart feature\nthat enables stable photo captures for medical/scientific imaging.\n\nFeatures documented:\n- autoLockOnPreviewStart prop\n- onExposureLocked callback\n- CONTROL_AE_LOCK implementation\n- AWB FLUORESCENT mode\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(bun typecheck:*)",
+      "Bash(git commit:*)",
+      "Bash(bun check-android:*)",
+      "Bash(bun build:*)",
+      "Bash(bun run build:*)"
     ],
     "deny": [],
     "ask": []
