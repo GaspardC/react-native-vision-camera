@@ -36,6 +36,8 @@ data class CameraConfiguration(
   var videoStabilizationMode: VideoStabilizationMode = VideoStabilizationMode.OFF,
   var exposure: Double? = null,
   var whiteBalanceLocked: Boolean = true,
+  var exposureLocked: Boolean = false,
+  var autoLockOnPreviewStart: Boolean = false,
 
   // Zoom
   var zoom: Float = 1f,

@@ -95,6 +95,12 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
       }
 
+      // Configure Exposure Lock using Camera2 Interop for Preview
+      if (configuration.exposureLocked) {
+        Log.i(TAG, "Locking auto-exposure for preview")
+        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
+      }
+
       if (fpsRange != null) {
         assertFormatRequirement("fps", format, InvalidFpsError(fpsRange.upper)) {
           fpsRange.lower >= it.minFps && fpsRange.upper <= it.maxFps
@@ -135,6 +141,12 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT)
       } else {
         photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+      }
+
+      // Configure Exposure Lock using Camera2 Interop for Photo capture
+      if (configuration.exposureLocked) {
+        Log.i(TAG, "Locking auto-exposure for photo capture")
+        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
       }
 
       if (format != null) {
