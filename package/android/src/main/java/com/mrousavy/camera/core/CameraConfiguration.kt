@@ -37,6 +37,7 @@ data class CameraConfiguration(
   var exposure: Double? = null,
   var whiteBalanceLocked: Boolean = true,
   var exposureLocked: Boolean = false,
+  var focusLocked: Boolean = false,
   var autoLockOnPreviewStart: Boolean = false,
 
   // Zoom

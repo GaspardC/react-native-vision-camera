@@ -85,6 +85,15 @@ class CameraView(context: Context) :
 
   // other props
   var isActive = false
+    set(value) {
+      val wasActive = field
+      field = value
+      // Reset locks when camera becomes inactive
+      if (wasActive && !value && autoLockOnPreviewStart) {
+        Log.i(TAG, "isActive changed from true to false - resetting locks")
+        resetAllLocks()
+      }
+    }
   var torch: Torch = Torch.OFF
   var zoom: Float = 1f // in "factor"
   var exposure: Double = 0.0
@@ -176,22 +185,24 @@ class CameraView(context: Context) :
   }
 
   /**
-   * Resets exposure lock when preview stops.
-   * This allows AE/AWB to re-adapt when camera restarts for a new exam.
+   * Resets all camera locks (exposure + focus) when preview stops.
+   * This allows AE/AWB/AF to re-adapt when camera restarts for a new exam.
    */
-  private fun resetExposureLock() {
-    if (!hasLockedExposure) return
-    hasLockedExposure = false
+  private fun resetAllLocks() {
     Log.i(TAG, "╔═══════════════════════════════════════════════════════")
-    Log.i(TAG, "║ 🔓 RESETTING EXPOSURE LOCK")
-    Log.i(TAG, "║ Preview stopped, unlocking AE/AWB for next session...")
+    Log.i(TAG, "║ 🔓 RESETTING ALL LOCKS (AE + AF)")
+    Log.i(TAG, "║ Preview stopped, unlocking for next session...")
+    Log.i(TAG, "║ hasLockedExposure: $hasLockedExposure")
     Log.i(TAG, "╚═══════════════════════════════════════════════════════")
+
+    hasLockedExposure = false
 
     mainCoroutineScope.launch {
       cameraSession.configure { config ->
         config.exposureLocked = false
+        config.focusLocked = false
       }
-      Log.i(TAG, "✅ Exposure lock released - AE/AWB will re-adapt on next start")
+      Log.i(TAG, "✅ All locks released - AE/AWB/AF will re-adapt on next start")
     }
   }
 
@@ -358,9 +369,9 @@ class CameraView(context: Context) :
             }
           } else {
             invokeOnPreviewStopped()
-            // Reset exposure lock when preview stops (allows AE/AWB to re-adapt on restart)
+            // Reset all locks when preview stops (allows AE/AWB/AF to re-adapt on restart)
             if (autoLockOnPreviewStart) {
-              resetExposureLock()
+              resetAllLocks()
             }
           }
           lastIsPreviewing = isPreviewing

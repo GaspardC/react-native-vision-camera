@@ -14,7 +14,8 @@
       "Bash(git commit:*)",
       "Bash(bun check-android:*)",
       "Bash(bun build:*)",
-      "Bash(bun run build:*)"
+      "Bash(bun run build:*)",
+      "Bash(tee:*)"
     ],
     "deny": [],
     "ask": []

@@ -93,14 +93,27 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
       }
 
+      // Configure Focus Lock using Camera2 Interop for Preview
+      // Only set AF_MODE when locked - otherwise let CameraX manage it natively
+      val afMode = if (configuration.focusLocked) {
+        // Lock focus by switching to one-shot AUTO mode (holds last focus position)
+        previewExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+        CaptureRequest.CONTROL_AF_MODE_AUTO
+      } else {
+        // Let CameraX manage AF natively - don't override with Camera2Interop
+        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE // For logging only
+      }
+
       // Log camera parameters summary for debugging
       Log.i(TAG, "┌─────────────────────────────────────────────────────")
       Log.i(TAG, "│ 📷 CAMERA PARAMETERS (Preview)")
       Log.i(TAG, "├─────────────────────────────────────────────────────")
       Log.i(TAG, "│ CONTROL_AWB_MODE: ${awbModeToString(awbMode)}")
       Log.i(TAG, "│ CONTROL_AE_LOCK: $aeLock")
+      Log.i(TAG, "│ CONTROL_AF_MODE: ${afModeToString(afMode)}")
       Log.i(TAG, "│ whiteBalanceLocked: ${configuration.whiteBalanceLocked}")
       Log.i(TAG, "│ exposureLocked: ${configuration.exposureLocked}")
+      Log.i(TAG, "│ focusLocked: ${configuration.focusLocked}")
       Log.i(TAG, "│ autoLockOnPreviewStart: ${configuration.autoLockOnPreviewStart}")
       Log.i(TAG, "└─────────────────────────────────────────────────────")
 
@@ -152,12 +165,22 @@ internal fun CameraSession.configureOutputs(configuration: CameraConfiguration) 
         photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
       }
 
+      // Configure Focus Lock using Camera2 Interop for Photo capture
+      // Only set AF_MODE when locked - otherwise let CameraX manage it natively
+      val photoAfMode = if (configuration.focusLocked) {
+        photoExtender.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+        CaptureRequest.CONTROL_AF_MODE_AUTO
+      } else {
+        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE // For logging only
+      }
+
       // Log camera parameters for photo capture
       Log.i(TAG, "┌─────────────────────────────────────────────────────")
       Log.i(TAG, "│ 📸 CAMERA PARAMETERS (Photo Capture)")
       Log.i(TAG, "├─────────────────────────────────────────────────────")
       Log.i(TAG, "│ CONTROL_AWB_MODE: ${awbModeToString(photoAwbMode)}")
       Log.i(TAG, "│ CONTROL_AE_LOCK: $photoAeLock")
+      Log.i(TAG, "│ CONTROL_AF_MODE: ${afModeToString(photoAfMode)}")
       Log.i(TAG, "└─────────────────────────────────────────────────────")
 
       if (format != null) {
@@ -444,5 +467,19 @@ private fun awbModeToString(mode: Int): String =
     CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT -> "CLOUDY_DAYLIGHT (~6500K)"
     CaptureRequest.CONTROL_AWB_MODE_TWILIGHT -> "TWILIGHT (~15000K)"
     CaptureRequest.CONTROL_AWB_MODE_SHADE -> "SHADE (~7500K)"
+    else -> "UNKNOWN($mode)"
+  }
+
+/**
+ * Helper to convert AF mode integer to human-readable string for logging
+ */
+private fun afModeToString(mode: Int): String =
+  when (mode) {
+    CaptureRequest.CONTROL_AF_MODE_OFF -> "OFF"
+    CaptureRequest.CONTROL_AF_MODE_AUTO -> "AUTO (locked)"
+    CaptureRequest.CONTROL_AF_MODE_MACRO -> "MACRO"
+    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO -> "CONTINUOUS_VIDEO"
+    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE -> "CONTINUOUS_PICTURE"
+    CaptureRequest.CONTROL_AF_MODE_EDOF -> "EDOF"
     else -> "UNKNOWN($mode)"
   }
