@@ -2,120 +2,54 @@
 
 ## Overview
 
-Feature to automatically lock exposure (AE), white balance (AWB), and focus (AF) for stable photo sequences. Designed for medical/scientific imaging where photo sequences must have identical exposure and focus settings.
+Automatically lock camera parameters for stable photo sequences in medical/scientific imaging.
 
-## Use Case
+## Locked Parameters
 
-- Capture sequences of 124 photos per examination
-- All photos must have consistent exposure, color, and focus
-- Exposure/AWB lock happens automatically after preview stabilization
-- Focus lock happens automatically after manual tap-to-focus
+| Parameter | Camera2 API | Value | When | Effect |
+|-----------|-------------|-------|------|--------|
+| **Exposure** | `CONTROL_AE_LOCK` | `true` | 1s after preview start or the last torch change | Freezes ISO + shutter speed + gain |
+| **White Balance** | `CONTROL_AWB_MODE` | `FLUORESCENT` | Always | Fixed ~4000K (LED optimized) |
+| **Focus** | CameraX `FocusMeteringAction` | auto-cancel disabled | After tap-to-focus | Holds focus distance until the next tap |
+
+## Why These Parameters?
+
+`AE_LOCK` covers the entire exposure chain:
+- `SENSOR_SENSITIVITY` (ISO) - included in AE lock
+- `SENSOR_EXPOSURE_TIME` - included in AE lock
+- Gain/amplification - included in AE lock
+
+Other parameters not locked:
+- `NOISE_REDUCTION_MODE` - minimal impact on consistency
+- `EDGE_MODE` (sharpening) - post-processing, not critical
+- `TONEMAP_MODE` - device compatibility risk
 
 ## API
 
-### Props
-
-```tsx
-interface CameraProps {
-  /**
-   * Auto-lock exposure and AWB after preview stabilization (~500ms).
-   * @platform Android
-   * @default false
-   */
-  autoLockOnPreviewStart?: boolean
-
-  /**
-   * Callback when exposure is locked and ready for stable captures.
-   * @platform Android
-   */
-  onExposureLocked?: () => void
-}
-```
-
-### Usage
-
 ```tsx
 <Camera
-  device={device}
-  isActive={true}
-  photo={true}
   autoLockOnPreviewStart={true}
-  onExposureLocked={() => {
-    console.log('Ready for stable photo captures')
-    startPhotoSequence()
-  }}
+  onExposureLocked={() => console.log('Ready!')}
 />
 ```
 
-## Behavior
+## Behavior Flow
 
 ```
-[Camera starts] → AE/AWB/AF in AUTO mode
+[Camera starts] → AE/AWB/AF in AUTO
        ↓
-[Preview starts] → AE/AWB converge (~500ms)
+[1s without preview/torch change] → AE locked + onExposureLocked()
        ↓
-[CONTROL_AE_LOCK = true] → Exposure locked
+[User tap] → AF held at point until the next tap
        ↓
-[onExposureLocked callback] → App notified
+[124 photos] → Consistent exposure/focus
        ↓
-[User taps to focus] → Focus at point → AF locked
-       ↓
-[Capture photos] → All with identical exposure/focus
-       ↓
-[Preview stops] → All locks reset (AE/AF)
-       ↓
-[New session] → AE/AWB/AF re-adapt to new conditions
+[isActive=false] → AE lock reset, CameraX releases focus
 ```
-
-## Implementation Details
-
-### Android (Camera2 via CameraX)
-
-| Parameter | Value | Effect |
-|-----------|-------|--------|
-| `CONTROL_AE_LOCK` | `true` | Locks auto-exposure |
-| `CONTROL_AWB_MODE` | `FLUORESCENT` | Fixed white balance (~4000K) |
-| `CONTROL_AF_MODE` | `AUTO` | Focus locked after tap (one-shot) |
-
-### Files Modified
-
-**VisionCamera library:**
-- `package/src/types/CameraProps.ts` - Added props
-- `package/src/Camera.tsx` - Bridge to native
-- `package/src/NativeCameraView.ts` - Native props
-- `package/android/.../CameraConfiguration.kt` - Config fields (exposureLocked, focusLocked)
-- `package/android/.../CameraSession+Configuration.kt` - AE_LOCK + AF_MODE logic
-- `package/android/.../CameraSession+Focus.kt` - Auto-lock focus after tap
-- `package/android/.../CameraView.kt` - Auto-lock trigger & reset
-- `package/android/.../CameraViewManager.kt` - React prop
-- `package/android/.../Events.kt` - ExposureLocked event
-
-## Focus Lock Behavior
-
-The focus is automatically locked after any successful tap-to-focus:
-
-1. User taps on the camera preview to focus
-2. Camera performs autofocus at that point
-3. If focus is successful, `CONTROL_AF_MODE` is set to `AUTO` (one-shot mode)
-4. Focus remains locked at that point until preview stops
-5. When preview stops (e.g., new exam), focus lock is reset along with exposure lock
-
-**Note:** Focus lock is independent of `autoLockOnPreviewStart` - it happens automatically after any tap-to-focus.
 
 ## Limitations
 
-- **Android only** - iOS not supported
-- **Photo mode only** - Not for video
-- **HDR incompatible** - AWB FLUORESCENT conflicts with HDR/Night Mode
-- **Manual reset** - Toggle `isActive` to re-adapt exposure and focus
-
-## Commits
-
-```
-93e0b730 docs: add auto-lock exposure specification
-e5d260e3 feat(js): add autoLockOnPreviewStart prop and onExposureLocked callback
-55f49254 feat(android): implement CONTROL_AE_LOCK via Camera2Interop
-a9064277 feat(android): auto-lock exposure on preview stabilization
-4656b9f5 feat(android): expose autoLockOnPreviewStart prop via React Native bridge
-f145ffb6 fix(android): reset exposure lock when preview stops
-```
+- Android only (Camera2 via CameraX)
+- Photo mode only
+- HDR incompatible (AWB FLUORESCENT conflict)
+- Reset requires `isActive` toggle
