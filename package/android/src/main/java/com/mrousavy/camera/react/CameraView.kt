@@ -8,6 +8,9 @@ import android.view.ScaleGestureDetector
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.camera.view.PreviewView
+import androidx.camera.core.TorchState
+import androidx.core.content.ContextCompat
+import com.google.common.util.concurrent.ListenableFuture
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.mrousavy.camera.core.CameraConfiguration
 import com.mrousavy.camera.core.CameraSession
@@ -29,6 +32,8 @@ import com.mrousavy.camera.react.extensions.installHierarchyFitter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 //
 // TODOs for the CameraView which are currently too hard to implement either because of CameraX' limitations, or my brain capacity.
@@ -47,6 +52,9 @@ class CameraView(context: Context) :
   FpsSampleCollector.Callback {
   companion object {
     const val TAG = "CameraView"
+
+    // Time for AE to settle after the preview starts or the torch changes, before freezing exposure.
+    private const val EXPOSURE_LOCK_DELAY_MS = 1000L
   }
 
   // react properties
@@ -95,6 +103,15 @@ class CameraView(context: Context) :
       }
     }
   var torch: Torch = Torch.OFF
+    set(value) {
+      val changed = field != value
+      field = value
+      // The torch changes scene brightness: release an existing lock and let AE settle again before locking.
+      if (changed && isPreviewStreaming && autoLockOnPreviewStart) {
+        if (hasLockedExposure) releaseExposureLock()
+        scheduleExposureLock()
+      }
+    }
   var zoom: Float = 1f // in "factor"
   var exposure: Double = 0.0
   var outputOrientation: OutputOrientation = OutputOrientation.DEVICE
@@ -121,8 +138,26 @@ class CameraView(context: Context) :
   // private properties
   private var isMounted = false
   private var hasLockedExposure = false
+  private var isPreviewStreaming = false
   private val mainCoroutineScope = CoroutineScope(Dispatchers.Main)
   private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val exposureLockRunnable = Runnable {
+    if (hasLockedExposure || !isActive || !isPreviewStreaming) return@Runnable
+    if (torch == Torch.ON && cameraSession.camera?.cameraInfo?.hasFlashUnit() == false) {
+      // configureSideProps() rejects the torch on this device (FlashUnavailableError), so locking would fail on every retry.
+      Log.w(TAG, "torch=on requested on a device without flash unit, exposure lock skipped")
+      return@Runnable
+    }
+    if (!isTorchApplied()) {
+      // CameraX can reject the torch (e.g. before the session is active, or after a resume).
+      // Request it again and never lock while it changes.
+      Log.i(TAG, "Torch not applied yet, re-requesting it and postponing exposure lock...")
+      cameraSession.camera?.cameraControl?.enableTorch(torch == Torch.ON)
+      scheduleExposureLock()
+      return@Runnable
+    }
+    triggerExposureLock()
+  }
 
   // session
   internal val cameraSession: CameraSession
@@ -162,47 +197,85 @@ class CameraView(context: Context) :
   }
 
   /**
-   * Triggers exposure lock after preview stabilization.
-   * This reconfigures the camera session with exposureLocked = true
-   * and emits the onExposureLocked callback to JS.
+   * Locks exposure once the preview and torch have been stable for EXPOSURE_LOCK_DELAY_MS.
+   * Each new trigger restarts the delay.
+   */
+  private fun scheduleExposureLock() {
+    if (!autoLockOnPreviewStart || hasLockedExposure) return
+    handler.removeCallbacks(exposureLockRunnable)
+    handler.postDelayed(exposureLockRunnable, EXPOSURE_LOCK_DELAY_MS)
+  }
+
+  private fun isTorchApplied(): Boolean {
+    val cameraInfo = cameraSession.camera?.cameraInfo ?: return false
+    val torchOn = cameraInfo.torchState.value == TorchState.ON
+    return torchOn == (torch == Torch.ON)
+  }
+
+  private suspend fun ListenableFuture<Void>.succeeded(): Boolean =
+    suspendCoroutine { continuation ->
+      addListener(
+        { continuation.resume(!isCancelled && runCatching { get() }.isSuccess) },
+        ContextCompat.getMainExecutor(context)
+      )
+    }
+
+  /**
+   * Applies CONTROL_AE_LOCK to the running session and emits onExposureLocked once CameraX confirms it.
    */
   private fun triggerExposureLock() {
     if (hasLockedExposure) return
     hasLockedExposure = true
     Log.i(TAG, "╔═══════════════════════════════════════════════════════")
     Log.i(TAG, "║ 🔒 TRIGGERING EXPOSURE LOCK")
-    Log.i(TAG, "║ Preview stabilized after 500ms, locking AE/AWB...")
+    Log.i(TAG, "║ Preview and torch stable for ${EXPOSURE_LOCK_DELAY_MS}ms, locking AE...")
     Log.i(TAG, "╚═══════════════════════════════════════════════════════")
 
     mainCoroutineScope.launch {
+      cameraSession.exposureLockUpdate = null
       cameraSession.configure { config ->
         config.exposureLocked = true
       }
-      // Notify JS that exposure is now locked
-      Log.i(TAG, "✅ Exposure lock applied - emitting onExposureLocked callback")
+      val confirmed = cameraSession.exposureLockUpdate?.succeeded() == true
+      if (!hasLockedExposure) return@launch // reset while the lock was being applied
+      if (!confirmed) {
+        Log.w(TAG, "Exposure lock was not confirmed by CameraX, retrying...")
+        releaseExposureLock()
+        scheduleExposureLock()
+        return@launch
+      }
+      Log.i(TAG, "✅ Exposure lock confirmed - emitting onExposureLocked callback")
       invokeOnExposureLocked()
     }
   }
 
+  private fun releaseExposureLock() {
+    hasLockedExposure = false
+    mainCoroutineScope.launch {
+      cameraSession.configure { config ->
+        config.exposureLocked = false
+      }
+    }
+  }
+
   /**
-   * Resets all camera locks (exposure + focus) when preview stops.
-   * This allows AE/AWB/AF to re-adapt when camera restarts for a new exam.
+   * Resets the exposure lock when preview stops so AE re-adapts when the camera restarts for a new exam.
    */
   private fun resetAllLocks() {
     Log.i(TAG, "╔═══════════════════════════════════════════════════════")
-    Log.i(TAG, "║ 🔓 RESETTING ALL LOCKS (AE + AF)")
+    Log.i(TAG, "║ 🔓 RESETTING EXPOSURE LOCK")
     Log.i(TAG, "║ Preview stopped, unlocking for next session...")
     Log.i(TAG, "║ hasLockedExposure: $hasLockedExposure")
     Log.i(TAG, "╚═══════════════════════════════════════════════════════")
 
+    handler.removeCallbacks(exposureLockRunnable)
     hasLockedExposure = false
 
     mainCoroutineScope.launch {
       cameraSession.configure { config ->
         config.exposureLocked = false
-        config.focusLocked = false
       }
-      Log.i(TAG, "✅ All locks released - AE/AWB/AF will re-adapt on next start")
+      Log.i(TAG, "✅ Exposure lock released - AE will re-adapt on next start")
     }
   }
 
@@ -355,21 +428,14 @@ class CameraView(context: Context) :
 
         val isPreviewing = state == PreviewView.StreamState.STREAMING
         if (isPreviewing != lastIsPreviewing) {
+          isPreviewStreaming = isPreviewing
           // Notify callback
           if (isPreviewing) {
             invokeOnPreviewStarted()
-            // Auto-lock exposure after preview stabilization
-            if (autoLockOnPreviewStart && !hasLockedExposure) {
-              Log.i(TAG, "Auto-lock enabled, scheduling exposure lock after 500ms...")
-              handler.postDelayed({
-                if (!hasLockedExposure && isActive) {
-                  triggerExposureLock()
-                }
-              }, 500) // Wait for AE/AWB to stabilize
-            }
+            scheduleExposureLock()
           } else {
             invokeOnPreviewStopped()
-            // Reset all locks when preview stops (allows AE/AWB/AF to re-adapt on restart)
+            // Reset the exposure lock when preview stops (allows AE to re-adapt on restart)
             if (autoLockOnPreviewStart) {
               resetAllLocks()
             }

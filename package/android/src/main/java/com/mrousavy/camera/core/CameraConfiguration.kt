@@ -37,7 +37,6 @@ data class CameraConfiguration(
   var exposure: Double? = null,
   var whiteBalanceLocked: Boolean = true,
   var exposureLocked: Boolean = false,
-  var focusLocked: Boolean = false,
   var autoLockOnPreviewStart: Boolean = false,
 
   // Zoom
@@ -144,7 +143,8 @@ data class CameraConfiguration(
       val sidePropsChanged = deviceChanged ||
         left?.torch != right.torch ||
         left.zoom != right.zoom ||
-        left.exposure != right.exposure
+        left.exposure != right.exposure ||
+        left.exposureLocked != right.exposureLocked
 
       val isActiveChanged = left?.isActive != right.isActive
 
