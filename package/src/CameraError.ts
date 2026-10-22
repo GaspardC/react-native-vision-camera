@@ -12,6 +12,7 @@ export type DeviceError =
   | 'device/pixel-format-not-supported'
   | 'device/low-light-boost-not-supported'
   | 'device/focus-not-supported'
+  | 'device/exposure-lock-not-supported'
   | 'device/camera-not-available-on-simulator'
   | 'device/camera-already-in-use'
 export type FormatError =
@@ -25,6 +26,8 @@ export type FormatError =
   | 'format/format-required'
 export type SessionError =
   | 'session/camera-not-ready'
+  | 'session/exposure-lock-canceled'
+  | 'session/exposure-lock-failed'
   | 'session/audio-in-use-by-other-app'
   | 'session/no-outputs'
   | 'session/audio-session-failed-to-activate'

@@ -188,6 +188,17 @@ class CameraViewModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
   }
 
+  @ReactMethod
+  fun setExposureLocked(viewTag: Int, locked: Boolean, promise: Promise) {
+    backgroundCoroutineScope.launch {
+      withPromise(promise) {
+        val view = findCameraView(viewTag)
+        view.setExposureLocked(locked)
+        return@withPromise null
+      }
+    }
+  }
+
   private fun canRequestPermission(permission: String): Boolean {
     val activity = currentActivity as? PermissionAwareActivity
     return activity?.shouldShowRequestPermissionRationale(permission) ?: false
