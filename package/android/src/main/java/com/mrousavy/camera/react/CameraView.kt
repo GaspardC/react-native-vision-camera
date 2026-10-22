@@ -143,6 +143,11 @@ class CameraView(context: Context) :
   private val handler = android.os.Handler(android.os.Looper.getMainLooper())
   private val exposureLockRunnable = Runnable {
     if (hasLockedExposure || !isActive || !isPreviewStreaming) return@Runnable
+    if (torch == Torch.ON && cameraSession.camera?.cameraInfo?.hasFlashUnit() == false) {
+      // configureSideProps() rejects the torch on this device (FlashUnavailableError), so locking would fail on every retry.
+      Log.w(TAG, "torch=on requested on a device without flash unit, exposure lock skipped")
+      return@Runnable
+    }
     if (!isTorchApplied()) {
       // CameraX can reject the torch (e.g. before the session is active, or after a resume).
       // Request it again and never lock while it changes.
@@ -203,8 +208,6 @@ class CameraView(context: Context) :
 
   private fun isTorchApplied(): Boolean {
     val cameraInfo = cameraSession.camera?.cameraInfo ?: return false
-    // Without a flash unit the torch can never turn on, so there is nothing to wait for.
-    if (torch == Torch.ON && !cameraInfo.hasFlashUnit()) return true
     val torchOn = cameraInfo.torchState.value == TorchState.ON
     return torchOn == (torch == Torch.ON)
   }
