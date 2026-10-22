@@ -144,8 +144,10 @@ class CameraView(context: Context) :
   private val exposureLockRunnable = Runnable {
     if (hasLockedExposure || !isActive || !isPreviewStreaming) return@Runnable
     if (!isTorchApplied()) {
-      // CameraX can reject or delay the torch (e.g. before the session is active). Never lock while it changes.
-      Log.i(TAG, "Torch not applied yet, postponing exposure lock...")
+      // CameraX can reject the torch (e.g. before the session is active, or after a resume).
+      // Request it again and never lock while it changes.
+      Log.i(TAG, "Torch not applied yet, re-requesting it and postponing exposure lock...")
+      cameraSession.camera?.cameraControl?.enableTorch(torch == Torch.ON)
       scheduleExposureLock()
       return@Runnable
     }
@@ -200,7 +202,10 @@ class CameraView(context: Context) :
   }
 
   private fun isTorchApplied(): Boolean {
-    val torchOn = cameraSession.camera?.cameraInfo?.torchState?.value == TorchState.ON
+    val cameraInfo = cameraSession.camera?.cameraInfo ?: return false
+    // Without a flash unit the torch can never turn on, so there is nothing to wait for.
+    if (torch == Torch.ON && !cameraInfo.hasFlashUnit()) return true
+    val torchOn = cameraInfo.torchState.value == TorchState.ON
     return torchOn == (torch == Torch.ON)
   }
 
