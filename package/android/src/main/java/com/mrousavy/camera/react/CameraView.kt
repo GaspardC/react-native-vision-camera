@@ -2,18 +2,31 @@ package com.mrousavy.camera.react
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import android.util.Log
 import android.view.Gravity
 import android.view.ScaleGestureDetector
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.CameraControl
+import androidx.camera.core.CameraState
 import androidx.camera.view.PreviewView
 import androidx.camera.core.TorchState
 import androidx.core.content.ContextCompat
-import com.google.common.util.concurrent.ListenableFuture
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.mrousavy.camera.core.CameraConfiguration
 import com.mrousavy.camera.core.CameraSession
+import com.mrousavy.camera.core.CameraNotReadyError
+import com.mrousavy.camera.core.ExposureLockCanceledError
+import com.mrousavy.camera.core.ExposureLockController
+import com.mrousavy.camera.core.ExposureLockNotSupportedError
+import com.mrousavy.camera.core.ExposureLockUpdateError
 import com.mrousavy.camera.core.CodeScannerFrame
 import com.mrousavy.camera.core.types.CameraDeviceFormat
 import com.mrousavy.camera.core.types.CodeScannerOptions
@@ -29,11 +42,15 @@ import com.mrousavy.camera.core.types.VideoStabilizationMode
 import com.mrousavy.camera.frameprocessors.Frame
 import com.mrousavy.camera.frameprocessors.FrameProcessor
 import com.mrousavy.camera.react.extensions.installHierarchyFitter
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 //
 // TODOs for the CameraView which are currently too hard to implement either because of CameraX' limitations, or my brain capacity.
@@ -97,7 +114,7 @@ class CameraView(context: Context) :
       val wasActive = field
       field = value
       // Reset locks when camera becomes inactive
-      if (wasActive && !value && autoLockOnPreviewStart) {
+      if (wasActive && !value) {
         Log.i(TAG, "isActive changed from true to false - resetting locks")
         resetAllLocks()
       }
@@ -107,7 +124,7 @@ class CameraView(context: Context) :
       val changed = field != value
       field = value
       // The torch changes scene brightness: release an existing lock and let AE settle again before locking.
-      if (changed && isPreviewStreaming && autoLockOnPreviewStart) {
+      if (changed && isPreviewStreaming && autoLockOnPreviewStart && !exposureLockController.manualControl) {
         if (hasLockedExposure) releaseExposureLock()
         scheduleExposureLock()
       }
@@ -137,12 +154,14 @@ class CameraView(context: Context) :
 
   // private properties
   private var isMounted = false
+  private val exposureLockController = ExposureLockController(::applyExposureLock)
   private var hasLockedExposure = false
+  private var exposureLockGeneration = 0L
   private var isPreviewStreaming = false
   private val mainCoroutineScope = CoroutineScope(Dispatchers.Main)
   private val handler = android.os.Handler(android.os.Looper.getMainLooper())
   private val exposureLockRunnable = Runnable {
-    if (hasLockedExposure || !isActive || !isPreviewStreaming) return@Runnable
+    if (exposureLockController.manualControl || hasLockedExposure || !isActive || !isPreviewStreaming) return@Runnable
     if (torch == Torch.ON && cameraSession.camera?.cameraInfo?.hasFlashUnit() == false) {
       // configureSideProps() rejects the torch on this device (FlashUnavailableError), so locking would fail on every retry.
       Log.w(TAG, "torch=on requested on a device without flash unit, exposure lock skipped")
@@ -193,6 +212,7 @@ class CameraView(context: Context) :
   }
 
   fun destroy() {
+    resetAllLocks()
     cameraSession.close()
   }
 
@@ -201,7 +221,7 @@ class CameraView(context: Context) :
    * Each new trigger restarts the delay.
    */
   private fun scheduleExposureLock() {
-    if (!autoLockOnPreviewStart || hasLockedExposure) return
+    if (!autoLockOnPreviewStart || exposureLockController.manualControl || hasLockedExposure || cameraSession.isDestroyed) return
     handler.removeCallbacks(exposureLockRunnable)
     handler.postDelayed(exposureLockRunnable, EXPOSURE_LOCK_DELAY_MS)
   }
@@ -212,71 +232,114 @@ class CameraView(context: Context) :
     return torchOn == (torch == Torch.ON)
   }
 
-  private suspend fun ListenableFuture<Void>.succeeded(): Boolean =
-    suspendCoroutine { continuation ->
-      addListener(
-        { continuation.resume(!isCancelled && runCatching { get() }.isSuccess) },
-        ContextCompat.getMainExecutor(context)
-      )
+  /** Resolves only after CameraX confirms the update; manual control disables legacy automatic locking. */
+  suspend fun setExposureLocked(locked: Boolean) = withContext(Dispatchers.Main.immediate) {
+    exposureLockGeneration++
+    Log.i(TAG, "Manual exposure lock requested: locked=$locked")
+    handler.removeCallbacks(exposureLockRunnable)
+    hasLockedExposure = false
+    exposureLockController.setLocked(locked)
+    Log.i(TAG, "Manual exposure lock confirmed: locked=$locked")
+  }
+
+  @OptIn(ExperimentalCamera2Interop::class)
+  private fun applyExposureLock(locked: Boolean): Deferred<Unit> {
+    val result = CompletableDeferred<Unit>()
+    val config = cameraSession.configuration
+    val camera = cameraSession.camera
+    // Persist unlocks before touching CameraX, including inactive/no-session resets.
+    if (!locked) config?.exposureLocked = false
+    val active = isActive && !cameraSession.isDestroyed && config?.isActive == true &&
+      camera?.cameraInfo?.cameraState?.value?.type == CameraState.Type.OPEN
+    if (locked && !active) throw CameraNotReadyError()
+    if (camera == null || cameraSession.isDestroyed) {
+      result.complete(Unit)
+      return result
     }
+    val supported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+      Camera2CameraInfo.from(camera.cameraInfo)
+      .getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE) == true
+    if (!supported) {
+      if (locked) throw ExposureLockNotSupportedError()
+      result.complete(Unit)
+      return result
+    }
+    // Apply directly: configure() swallows errors and can skip unchanged configuration values.
+    val update = Camera2CameraControl.from(camera.cameraControl).addCaptureRequestOptions(
+      CaptureRequestOptions.Builder()
+        .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, locked)
+        .build()
+    )
+    config?.exposureLocked = locked
+    cameraSession.exposureLockUpdate = update
+    update.addListener(
+      {
+        try {
+          update.get()
+          if (locked && (!isActive || cameraSession.isDestroyed || cameraSession.camera !== camera)) {
+            throw ExposureLockCanceledError()
+          }
+          result.complete(Unit)
+        } catch (error: Throwable) {
+          result.completeExceptionally(error.cause ?: error)
+        }
+      },
+      ContextCompat.getMainExecutor(context)
+    )
+    result.invokeOnCompletion { if (result.isCancelled) update.cancel(false) }
+    // There is no running AE to confirm while inactive. The false request is retained for the next start.
+    if (!active && !locked) result.complete(Unit)
+    return result
+  }
 
-  /**
-   * Applies CONTROL_AE_LOCK to the running session and emits onExposureLocked once CameraX confirms it.
-   */
   private fun triggerExposureLock() {
-    if (hasLockedExposure) return
+    if (hasLockedExposure || exposureLockController.manualControl) return
     hasLockedExposure = true
-    Log.i(TAG, "╔═══════════════════════════════════════════════════════")
-    Log.i(TAG, "║ 🔒 TRIGGERING EXPOSURE LOCK")
-    Log.i(TAG, "║ Preview and torch stable for ${EXPOSURE_LOCK_DELAY_MS}ms, locking AE...")
-    Log.i(TAG, "╚═══════════════════════════════════════════════════════")
-
+    val generation = ++exposureLockGeneration
     mainCoroutineScope.launch {
-      cameraSession.exposureLockUpdate = null
-      cameraSession.configure { config ->
-        config.exposureLocked = true
+      try {
+        exposureLockController.setLocked(true, manual = false)
+        if (generation != exposureLockGeneration || !hasLockedExposure || exposureLockController.manualControl) return@launch
+        invokeOnExposureLocked()
+      } catch (error: Throwable) {
+        if (generation != exposureLockGeneration) return@launch
+        hasLockedExposure = false
+        if (error !is ExposureLockCanceledError) {
+          Log.w(TAG, "Automatic exposure lock was not confirmed by CameraX", error)
+          scheduleExposureLock()
+        }
       }
-      val confirmed = cameraSession.exposureLockUpdate?.succeeded() == true
-      if (!hasLockedExposure) return@launch // reset while the lock was being applied
-      if (!confirmed) {
-        Log.w(TAG, "Exposure lock was not confirmed by CameraX, retrying...")
-        releaseExposureLock()
-        scheduleExposureLock()
-        return@launch
-      }
-      Log.i(TAG, "✅ Exposure lock confirmed - emitting onExposureLocked callback")
-      invokeOnExposureLocked()
     }
   }
 
   private fun releaseExposureLock() {
+    val generation = ++exposureLockGeneration
     hasLockedExposure = false
-    mainCoroutineScope.launch {
-      cameraSession.configure { config ->
-        config.exposureLocked = false
+    val reportFailure: (Throwable) -> Unit = { error ->
+      if (generation == exposureLockGeneration && isActive && !cameraSession.isDestroyed &&
+        (error !is CancellationException || error is TimeoutCancellationException) && error !is ExposureLockCanceledError &&
+        error !is CameraControl.OperationCanceledException
+      ) {
+        onError(if (error is TimeoutCancellationException) ExposureLockUpdateError(error) else error)
       }
+    }
+    try {
+      val update = exposureLockController.reset()
+      mainCoroutineScope.launch {
+        try {
+          withTimeout(5000L) { update.await() }
+        } catch (error: Throwable) {
+          reportFailure(error)
+        }
+      }
+    } catch (error: Throwable) {
+      reportFailure(error)
     }
   }
 
-  /**
-   * Resets the exposure lock when preview stops so AE re-adapts when the camera restarts for a new exam.
-   */
   private fun resetAllLocks() {
-    Log.i(TAG, "╔═══════════════════════════════════════════════════════")
-    Log.i(TAG, "║ 🔓 RESETTING EXPOSURE LOCK")
-    Log.i(TAG, "║ Preview stopped, unlocking for next session...")
-    Log.i(TAG, "║ hasLockedExposure: $hasLockedExposure")
-    Log.i(TAG, "╚═══════════════════════════════════════════════════════")
-
     handler.removeCallbacks(exposureLockRunnable)
-    hasLockedExposure = false
-
-    mainCoroutineScope.launch {
-      cameraSession.configure { config ->
-        config.exposureLocked = false
-      }
-      Log.i(TAG, "✅ Exposure lock released - AE will re-adapt on next start")
-    }
+    releaseExposureLock()
   }
 
   fun update() {
@@ -436,9 +499,7 @@ class CameraView(context: Context) :
           } else {
             invokeOnPreviewStopped()
             // Reset the exposure lock when preview stops (allows AE to re-adapt on restart)
-            if (autoLockOnPreviewStart) {
-              resetAllLocks()
-            }
+            resetAllLocks()
           }
           lastIsPreviewing = isPreviewing
         }
@@ -470,6 +531,7 @@ class CameraView(context: Context) :
   }
 
   override fun onStopped() {
+    resetAllLocks()
     invokeOnStopped()
   }
 
