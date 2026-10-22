@@ -402,7 +402,7 @@ internal fun CameraSession.configureSideProps(config: CameraConfiguration) {
 
   // Exposure lock goes on the running session (repeating and still requests).
   // Setting it on the outputs would need a rebind, which restarts AE.
-  Camera2CameraControl.from(camera.cameraControl).addCaptureRequestOptions(
+  exposureLockUpdate = Camera2CameraControl.from(camera.cameraControl).addCaptureRequestOptions(
     CaptureRequestOptions.Builder()
       .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, config.exposureLocked)
       .build()

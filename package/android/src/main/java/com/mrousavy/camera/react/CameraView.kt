@@ -8,6 +8,9 @@ import android.view.ScaleGestureDetector
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.camera.view.PreviewView
+import androidx.camera.core.TorchState
+import androidx.core.content.ContextCompat
+import com.google.common.util.concurrent.ListenableFuture
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.mrousavy.camera.core.CameraConfiguration
 import com.mrousavy.camera.core.CameraSession
@@ -29,6 +32,8 @@ import com.mrousavy.camera.react.extensions.installHierarchyFitter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 //
 // TODOs for the CameraView which are currently too hard to implement either because of CameraX' limitations, or my brain capacity.
@@ -101,8 +106,11 @@ class CameraView(context: Context) :
     set(value) {
       val changed = field != value
       field = value
-      // The torch changes scene brightness, so wait for AE to settle again before locking.
-      if (changed && isPreviewStreaming) scheduleExposureLock()
+      // The torch changes scene brightness: release an existing lock and let AE settle again before locking.
+      if (changed && isPreviewStreaming && autoLockOnPreviewStart) {
+        if (hasLockedExposure) releaseExposureLock()
+        scheduleExposureLock()
+      }
     }
   var zoom: Float = 1f // in "factor"
   var exposure: Double = 0.0
@@ -134,7 +142,14 @@ class CameraView(context: Context) :
   private val mainCoroutineScope = CoroutineScope(Dispatchers.Main)
   private val handler = android.os.Handler(android.os.Looper.getMainLooper())
   private val exposureLockRunnable = Runnable {
-    if (!hasLockedExposure && isActive && isPreviewStreaming) triggerExposureLock()
+    if (hasLockedExposure || !isActive || !isPreviewStreaming) return@Runnable
+    if (!isTorchApplied()) {
+      // CameraX can reject or delay the torch (e.g. before the session is active). Never lock while it changes.
+      Log.i(TAG, "Torch not applied yet, postponing exposure lock...")
+      scheduleExposureLock()
+      return@Runnable
+    }
+    triggerExposureLock()
   }
 
   // session
@@ -184,8 +199,21 @@ class CameraView(context: Context) :
     handler.postDelayed(exposureLockRunnable, EXPOSURE_LOCK_DELAY_MS)
   }
 
+  private fun isTorchApplied(): Boolean {
+    val torchOn = cameraSession.camera?.cameraInfo?.torchState?.value == TorchState.ON
+    return torchOn == (torch == Torch.ON)
+  }
+
+  private suspend fun ListenableFuture<Void>.succeeded(): Boolean =
+    suspendCoroutine { continuation ->
+      addListener(
+        { continuation.resume(!isCancelled && runCatching { get() }.isSuccess) },
+        ContextCompat.getMainExecutor(context)
+      )
+    }
+
   /**
-   * Applies CONTROL_AE_LOCK to the running session and emits the onExposureLocked callback to JS.
+   * Applies CONTROL_AE_LOCK to the running session and emits onExposureLocked once CameraX confirms it.
    */
   private fun triggerExposureLock() {
     if (hasLockedExposure) return
@@ -196,12 +224,29 @@ class CameraView(context: Context) :
     Log.i(TAG, "╚═══════════════════════════════════════════════════════")
 
     mainCoroutineScope.launch {
+      cameraSession.exposureLockUpdate = null
       cameraSession.configure { config ->
         config.exposureLocked = true
       }
-      // Notify JS that exposure is now locked
-      Log.i(TAG, "✅ Exposure lock applied - emitting onExposureLocked callback")
+      val confirmed = cameraSession.exposureLockUpdate?.succeeded() == true
+      if (!hasLockedExposure) return@launch // reset while the lock was being applied
+      if (!confirmed) {
+        Log.w(TAG, "Exposure lock was not confirmed by CameraX, retrying...")
+        releaseExposureLock()
+        scheduleExposureLock()
+        return@launch
+      }
+      Log.i(TAG, "✅ Exposure lock confirmed - emitting onExposureLocked callback")
       invokeOnExposureLocked()
+    }
+  }
+
+  private fun releaseExposureLock() {
+    hasLockedExposure = false
+    mainCoroutineScope.launch {
+      cameraSession.configure { config ->
+        config.exposureLocked = false
+      }
     }
   }
 

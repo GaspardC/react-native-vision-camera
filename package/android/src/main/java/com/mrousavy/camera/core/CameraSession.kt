@@ -26,6 +26,7 @@ import com.mrousavy.camera.core.extensions.await
 import com.mrousavy.camera.core.types.Orientation
 import com.mrousavy.camera.core.types.ShutterType
 import com.mrousavy.camera.core.utils.runOnUiThread
+import com.google.common.util.concurrent.ListenableFuture
 import com.mrousavy.camera.frameprocessors.Frame
 import java.io.Closeable
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +44,8 @@ class CameraSession(internal val context: Context, internal val callback: Callba
   internal var configuration: CameraConfiguration? = null
   internal val cameraProvider = ProcessCameraProvider.getInstance(context)
   internal var camera: Camera? = null
+  // Result of the latest CONTROL_AE_LOCK request on the running session
+  internal var exposureLockUpdate: ListenableFuture<Void>? = null
 
   // Camera Outputs
   internal var previewOutput: Preview? = null
